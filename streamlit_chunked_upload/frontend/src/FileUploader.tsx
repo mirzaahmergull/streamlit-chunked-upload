@@ -67,10 +67,10 @@ function formatBytes(bytes: number): string {
 }
 
 function getStreamlitUrl(): string {
-  // streamlitUrl
-  var queryString = window.location.search;
-  var urlParams = new URLSearchParams(queryString);
-  return urlParams.get("streamlitUrl") || window.parent.document.baseURI;
+  if (typeof window.location.origin === 'undefined') {
+    return window.location.protocol + '//' + window.location.host;
+  }
+  return window.location.origin;
 }
 
 
@@ -339,10 +339,18 @@ class FileUploader extends StreamlitComponentBase<State> {
   };
 
   private getXsrftoken = (): string => {
-    // streamlit_version 1.26.0 - 1.27.0 is "_xsrf"
-    // after that "_streamlit_xsrf"
-    const xsrf_token = getCookie("_xsrf") || getCookie("_streamlit_xsrf");
-    return xsrf_token;
+    // Try all possible XSRF token cookie names
+    const possibleTokens = [
+      '_streamlit_xsrf',  // New Streamlit versions
+      '_xsrf',            // Older versions
+      'streamlit_xsrf'    // Alternative name
+    ];
+    
+    for (const tokenName of possibleTokens) {
+      const token = getCookie(tokenName);
+      if (token) return token;
+    }
+    return '';
   };
 
   private deleteUploadedFile = async (): Promise<void> => {
@@ -412,17 +420,23 @@ class FileUploader extends StreamlitComponentBase<State> {
         const formData = new FormData();
         formData.append('sessionId', sessionId);
         formData.append('file', file);
-        const xsrfToken = this.getXsrftoken();
+
         const config: any = {
           baseURL: getStreamlitUrl(),
+          headers: {
+            'X-Xsrftoken': this.getXsrftoken(),
+            'Content-Type': 'multipart/form-data',
+            'X-Requested-With': 'XMLHttpRequest'
+          },
+          withCredentials: true
         };
-        if (xsrfToken) {
-          config.headers = {
-            'X-Xsrftoken': xsrfToken,
-          };
-        }
+
         try {
-          const response = await axios.put(`${endPoint}/${sessionId}/${fileId}`, formData, config);
+          const response = await axios.put(
+            `${endPoint}/${sessionId}/${fileId}`, 
+            formData, 
+            config
+          );
           if (response.status === 204) {
             this.setState({ fileId });
             const sendData: SendData = {
@@ -433,11 +447,13 @@ class FileUploader extends StreamlitComponentBase<State> {
               totalChunks: 1,
             };
             Streamlit.setComponentValue(sendData);
-          } else {
-            // Handle error if needed
           }
         } catch (error) {
-          console.error('Fetch error:', error);
+          console.error('Upload error:', error);
+          // Optionally show error to user via Streamlit
+          Streamlit.setComponentValue({
+            error: 'Upload failed. Please try again.'
+          });
         } finally {
           this.setState({ uploading: false });
         }
@@ -455,6 +471,16 @@ class FileUploader extends StreamlitComponentBase<State> {
     const sessionId = this.props.args["session_id"];
     const fileId = uuidv4();
 
+    const config: any = {
+      baseURL: getStreamlitUrl(),
+      headers: {
+        'X-Xsrftoken': this.getXsrftoken(),
+        'Content-Type': 'multipart/form-data',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      withCredentials: true
+    };
+
     // Limit the number of concurrent executions
     const Parallels = (ps = new Set<Promise<unknown>>()) => ({
       add: (p: Promise<unknown>) => ps.add(!!p.then(() => ps.delete(p)).catch(() => ps.delete(p)) && p),
@@ -471,15 +497,6 @@ class FileUploader extends StreamlitComponentBase<State> {
       const formData = new FormData();
       formData.append('sessionId', sessionId);
       formData.append('file', chunk);
-      const xsrfToken = this.getXsrftoken();
-      const config: any = {
-        baseURL: getStreamlitUrl(),
-      };
-      if (xsrfToken) {
-        config.headers = {
-          'X-Xsrftoken': xsrfToken,
-        };
-      }
       // Create an Axios instance and send the request.
       const axiosInstance = axios.create(config);
       // Send the request and add the Promise for handling the result to the array.
