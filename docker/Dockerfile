@@ -18,7 +18,7 @@ RUN pip install --upgrade pip && \
     pip install -r requirements.txt
 
 # Install additional wheel file
-RUN pip install streamlit-chunk-file-uploader
+RUN pip install streamlit-chunked-upload
 
 # Copy the Streamlit app
 COPY app /app
